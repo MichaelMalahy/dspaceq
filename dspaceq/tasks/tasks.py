@@ -38,9 +38,8 @@ s3_bucket = 'ul-bagit'
 #Example task
 @task()
 def add(x, y):
-    """ Example task that adds two numbers or strings
-        args: x and y
-        return addition or concatination of strings
+    """
+    return addition or concatination of strings
     """
     result = x + y
     return result
@@ -97,9 +96,11 @@ def dspace_ingest(bag_details, collection, notify_email="libir@ou.edu"):
         print("Error: {0}".format(e))
         results = {"Error": "Failed to ingest"}
     finally:
-       rmtree(tempdir)
-
-    return({"success": {item[0]:"{0}{1}".format(DSPACE_FQDN, item[1]) for item in results}})
+        rmtree(tempdir)
+    if "Error" in results:
+        return(results)
+    else:
+        return({"success": {item[0]:"{0}{1}".format(DSPACE_FQDN, item[1]) for item in results}})
 
 @task()
 def ingest_thesis_dissertation(bag="", collection="",): #dspace_endpoint=REST_ENDPOINT):
@@ -130,6 +131,39 @@ def ingest_thesis_dissertation(bag="", collection="",): #dspace_endpoint=REST_EN
         mmsid = get_mmsid(bag)
         bib_record = get_bib_record(mmsid)
         dc = bib_to_dc(bib_record)
+
+        # Remove 590 tags from marc bib record
+        marc_xml = get_marc_from_bib(bib_record).getroot()
+        found_elements = marc_xml.xpath("datafield[@tag=590]")
+        for element in found_elements:
+            marc_xml.remove(element)
+        namespaced_marc_xml = valaidate_marc(marc_xml)
+
+        dc_xml_element = marc_xml_to_dc_xml(namespaced_marc_xml)gettroot()
+
+        # Remove duplicate "date created" fields
+        results = dc_xml_element.xpath("//dublin_core/dcvalue[@element='date' and @qualifier='created']")
+        for result in results[1:]:
+            dc_xml_element.remove(result)
+
+        # If committee.txt is present, add contents to dc metadata
+        if committee:
+            for committee_memeber in committee.split("\n"):
+                c = etree.Element("dcvalue", element='contributor', qualifier='committeeMember')
+                c.text = committee_member
+                dc_sml_element.insert(0, c)
+            logging.info("Committee.txt added to metadata for: {0}".format(bag))
+
+        # If abstract.txt is present, add contents to dc metadata
+        if abstract:
+            a = etree.Element("dcvalue", element='contributor', qualifier='abstract')
+            a.text = abstract
+            dc_xml_element.insert(0, a)
+            logging.info("Abstract.txt added to metadata for: {0}".format(bag))
+
+        dc = etree.tostring(dc_xml_element, pretty_print=True)
+        print(dc)
+
 
         if collection == "":
             if type(bib_record) is not dict: #If this is a dictionary, we failed
@@ -165,7 +199,7 @@ def ingest_thesis_dissertation(bag="", collection="",): #dspace_endpoint=REST_EN
                     }
         )
         logging.info("Processing Collection: {0}\nBags:{1}".format(collection, collection_bags))
-        chain = (ingest | group(update_alma, update_catalog, send_email))
+        chain = (ingest) # | group(update_alma, update_catalog, send_email))
         chain.delay()
     return {"Kicked off ingest": bags, "failed": failed}
 
